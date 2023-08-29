@@ -29,6 +29,7 @@ import { PluginManager, TypeScriptServerPlugin } from './tsServer/plugins';
 import { TelemetryProperties, TelemetryReporter, VSCodeTelemetryReporter } from './logging/telemetry';
 import Tracer from './logging/tracer';
 import { ProjectType, inferredProjectCompilerOptions } from './tsconfig';
+import { Schemes } from './configuration/schemes';
 
 
 export interface TsDiagnostics {
@@ -91,10 +92,12 @@ namespace ServerState {
 	export type State = typeof None | Running | Errored;
 }
 
+export const emptyAuthority = 'ts-nul-authority';
+
+export const inMemoryResourcePrefix = '^';
+
 export default class TypeScriptServiceClient extends Disposable implements ITypeScriptServiceClient {
 
-	private readonly emptyAuthority = 'ts-nul-authority';
-	private readonly inMemoryResourcePrefix = '^';
 
 	private readonly _onReady?: { promise: Promise<void>; resolve: () => void; reject: () => void };
 	private _configuration: TypeScriptServiceConfiguration;
@@ -173,7 +176,6 @@ export default class TypeScriptServiceClient extends Disposable implements IType
 		this.bufferSyncSupport = new BufferSyncSupport(this, allModeIds, onCaseInsenitiveFileSystem);
 		this.onReady(() => { this.bufferSyncSupport.listen(); });
 
-		this.diagnosticsManager = new DiagnosticsManager('typescript', onCaseInsenitiveFileSystem);
 		this.bufferSyncSupport.onDelete(resource => {
 			this.cancelInflightRequestsForResource(resource);
 			this.diagnosticsManager.deleteAllDiagnosticsInFile(resource);
@@ -210,7 +212,7 @@ export default class TypeScriptServiceClient extends Disposable implements IType
 			}
 			return this.apiVersion.fullVersionString;
 		});
-
+		this.diagnosticsManager = new DiagnosticsManager('typescript', this._configuration, this.telemetryReporter, onCaseInsenitiveFileSystem);
 		this.typescriptServerSpawner = new TypeScriptServerSpawner(this.versionProvider, this._versionManager, this.logDirectoryProvider, this.pluginPathsProvider, this.logger, this.telemetryReporter, this.tracer, this.processFactory);
 
 		this._register(this.pluginManager.onDidUpdateConfig(update => {
@@ -695,9 +697,9 @@ export default class TypeScriptServiceClient extends Disposable implements IType
 			return resource.fsPath;
 		}
 
-		return (this.isProjectWideIntellisenseOnWebEnabled() ? '' : this.inMemoryResourcePrefix)
+		return (this.isProjectWideIntellisenseOnWebEnabled() ? '' : inMemoryResourcePrefix)
 			+ '/' + resource.scheme
-			+ '/' + (resource.authority || this.emptyAuthority)
+			+ '/' + (resource.authority || emptyAuthority)
 			+ (resource.path.startsWith('/') ? resource.path : '/' + resource.path)
 			+ (resource.fragment ? '#' + resource.fragment : '');
 	}
@@ -739,46 +741,48 @@ export default class TypeScriptServiceClient extends Disposable implements IType
 			}
 			const parts = filepath.match(/^\/([^\/]+)\/([^\/]*)\/(.+)$/);
 			if (parts) {
-				const resource = vscode.Uri.parse(parts[1] + '://' + (parts[2] === this.emptyAuthority ? '' : parts[2]) + '/' + parts[3]);
+				const resource = vscode.Uri.parse(parts[1] + '://' + (parts[2] === emptyAuthority ? '' : parts[2]) + '/' + parts[3]);
 				return this.bufferSyncSupport.toVsCodeResource(resource);
 			}
 		}
 
-		if (filepath.startsWith(this.inMemoryResourcePrefix)) {
+		if (filepath.startsWith(inMemoryResourcePrefix)) {
 			const parts = filepath.match(/^\^\/([^\/]+)\/([^\/]*)\/(.+)$/);
 			if (parts) {
-				const resource = vscode.Uri.parse(parts[1] + '://' + (parts[2] === this.emptyAuthority ? '' : parts[2]) + '/' + parts[3]);
+				const resource = vscode.Uri.parse(parts[1] + '://' + (parts[2] === emptyAuthority ? '' : parts[2]) + '/' + parts[3]);
 				return this.bufferSyncSupport.toVsCodeResource(resource);
 			}
 		}
 		return this.bufferSyncSupport.toResource(filepath);
 	}
 
-	public getWorkspaceRootForResource(resource: vscode.Uri): string | undefined {
+	public getWorkspaceRootForResource(resource: vscode.Uri): vscode.Uri | undefined {
 		const roots = vscode.workspace.workspaceFolders ? Array.from(vscode.workspace.workspaceFolders) : undefined;
 		if (!roots?.length) {
-			if (resource.scheme === fileSchemes.officeScript) {
-				return '/';
-			}
 			return undefined;
 		}
 
-		let tsRootPath: string | undefined;
-		for (const root of roots.sort((a, b) => a.uri.fsPath.length - b.uri.fsPath.length)) {
-			if (root.uri.scheme === resource.scheme && root.uri.authority === resource.authority) {
-				if (resource.fsPath.startsWith(root.uri.fsPath + path.sep)) {
-					tsRootPath = this.toTsFilePath(root.uri);
-					break;
+		// For notebook cells, we need to use the notebook document to look up the workspace
+		if (resource.scheme === Schemes.notebookCell) {
+			for (const notebook of vscode.workspace.notebookDocuments) {
+				for (const cell of notebook.getCells()) {
+					if (cell.document.uri.toString() === resource.toString()) {
+						resource = notebook.uri;
+						break;
+					}
 				}
 			}
 		}
 
-		tsRootPath ??= this.toTsFilePath(roots[0].uri);
-		if (!tsRootPath || tsRootPath.startsWith(this.inMemoryResourcePrefix)) {
-			return undefined;
+		for (const root of roots.sort((a, b) => a.uri.fsPath.length - b.uri.fsPath.length)) {
+			if (root.uri.scheme === resource.scheme && root.uri.authority === resource.authority) {
+				if (resource.fsPath.startsWith(root.uri.fsPath + path.sep)) {
+					return root.uri;
+				}
+			}
 		}
 
-		return tsRootPath;
+		return vscode.workspace.getWorkspaceFolder(resource)?.uri;
 	}
 
 	public execute(command: keyof TypeScriptRequests, args: any, token: vscode.CancellationToken, config?: ExecConfig): Promise<ServerResponse.Response<Proto.Response>> {
