@@ -42,7 +42,7 @@ export const enum AccessibilityVerbositySettingId {
 	Editor = 'accessibility.verbosity.editor',
 	Hover = 'accessibility.verbosity.hover',
 	Notification = 'accessibility.verbosity.notification',
-	EditorUntitledHint = 'accessibility.verbosity.editor.untitledHint'
+	EditorUntitledHint = 'accessibility.verbosity.untitledHint'
 }
 
 export const enum AccessibleViewProviderId {
@@ -107,7 +107,7 @@ const configuration: IConfigurationNode = {
 			...baseProperty
 		},
 		[AccessibilityVerbositySettingId.EditorUntitledHint]: {
-			description: localize('verbosity.editor.untitledhint', 'Provide information about relevant actions in an untitled text editor.'),
+			description: localize('verbosity.untitledhint', 'Provide information about relevant actions in an untitled text editor.'),
 			...baseProperty
 		}
 	}
@@ -128,7 +128,7 @@ export function registerAccessibilityConfiguration() {
 				scope: ConfigurationScope.APPLICATION,
 			},
 			[AccessibilityWorkbenchSettingId.DimUnfocusedOpacity]: {
-				description: localize('dimUnfocusedOpacity', 'The opacity fraction (0.2 to 1.0) to use for unfocused editors and terminals. This will only take effect when {0} is enabled.', `\`#${AccessibilityWorkbenchSettingId.DimUnfocusedEnabled}#\``),
+				markdownDescription: localize('dimUnfocusedOpacity', 'The opacity fraction (0.2 to 1.0) to use for unfocused editors and terminals. This will only take effect when {0} is enabled.', `\`#${AccessibilityWorkbenchSettingId.DimUnfocusedEnabled}#\``),
 				type: 'number',
 				minimum: ViewDimUnfocusedOpacityProperties.Minimum,
 				maximum: ViewDimUnfocusedOpacityProperties.Maximum,
